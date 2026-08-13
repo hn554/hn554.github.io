@@ -15,10 +15,9 @@ PNG 를 그 위에 덮으므로(drawImage(frameImg, ...)), 프레임의 사진 �
   - Worship Again(1): 사진 영역 안 전체가 체크무늬(종이 위 흰+투명 교대).
     영역 안 '밝은 무채색/미색 불투명' 전부 제거. 성경구절 텍스트(어두움)와
     별 낙서(유채색)는 조건에 안 걸려 보존.
-  - 꿈청 낙서(2): 사진 영역은 의도된 반투명 모눈 질감(알파 ≤127)이라 보존하고,
-    하트 칸 상단의 불투명 체크무늬 패치만 제거. 패치는 '고알파 밝은 무채색
-    픽셀이 3×3 코어를 이루는 블록 클러스터'로 찾는다 — 가는 획(흰 반짝이
-    장식)은 코어가 없어 건드리지 않는다.
+  - 꿈청 낙서(2): 사진 영역에 알파 50 안팎의 흰 막이 깔리고 그 위에 격자선이
+    얹혀 있어(합성 시 사진이 뿌옇게 뜨고 격자가 비친다) 0·1 과 같은 규칙으로
+    전부 제거. 분홍 낙서(유채색)와 검은 테두리(어두움)는 보존된다.
 
 보라 글로우(3)는 정상이라 건드리지 않는다.
 
@@ -42,12 +41,6 @@ LIGHT_MIN = 150      # '밝은' 판정: 모든 채널이 이 이상
 NEUTRAL_MAX = 12     # '무채색' 판정: 채널 간 편차가 이 이하
 ALPHA_KEEP = 10      # 이 이하 알파는 질감으로 보고 보존
 FLOOD_MARGIN = 48    # flood-fill 이 셀 밖으로 나갈 수 있는 최대 거리
-
-# 꿈청 낙서 패치 탐지 파라미터
-SEED_ALPHA = 160     # 패치 후보(고알파) 기준
-CORE_MIN = 4         # 20px 블록이 패치로 인정될 3×3 코어 최소 개수
-BLOCK = 20
-PATCH_CLEAR_ALPHA = 24  # 패치 블록 안에서 지울 최소 알파
 
 B64_RE = r'"data:image/png;base64,([A-Za-z0-9+/=]+)"'
 
@@ -111,37 +104,6 @@ def clear_full(px, w, h, cells, wide_tint, flood):
     return cleared
 
 
-def clear_patch(px, w, h, cells):
-    """불투명 체크무늬 패치만 제거하고 반투명 모눈 질감은 보존."""
-    seeds = set()
-    for cx, cy, cw, ch in cells:
-        for y in range(max(int(cy), 0), min(int(cy + ch + 1), h)):
-            for x in range(max(int(cx), 0), min(int(cx + cw + 1), w)):
-                p = px[x, y]
-                if p[3] >= SEED_ALPHA and neutral(p):
-                    seeds.add((x, y))
-    # 3×3 이웃이 전부 시드인 픽셀 = 면(체크 칸)의 코어. 가는 획엔 없다.
-    cores = [(x, y) for (x, y) in seeds
-             if all((x + dx, y + dy) in seeds
-                    for dx in (-1, 0, 1) for dy in (-1, 0, 1))]
-    blocks = {}
-    for x, y in cores:
-        key = (x // BLOCK, y // BLOCK)
-        blocks[key] = blocks.get(key, 0) + 1
-    patch = {b for b, n in blocks.items() if n >= CORE_MIN}
-    patch |= {(bx + dx, by + dy) for bx, by in patch
-              for dx in (-1, 0, 1) for dy in (-1, 0, 1)}
-    cleared = 0
-    for bx, by in patch:
-        for y in range(by * BLOCK, min((by + 1) * BLOCK, h)):
-            for x in range(bx * BLOCK, min((bx + 1) * BLOCK, w)):
-                p = px[x, y]
-                if p[3] >= PATCH_CLEAR_ALPHA and neutral(p):
-                    px[x, y] = (p[0], p[1], p[2], 0)
-                    cleared += 1
-    return cleared
-
-
 def main():
     html = HTML_PATH.read_text(encoding="utf-8")
     cells = load_cells(html)
@@ -152,7 +114,7 @@ def main():
     plans = [
         (0, lambda px, w, h: clear_full(px, w, h, cells[0], False, flood=True)),
         (1, lambda px, w, h: clear_full(px, w, h, cells[1], True, flood=False)),
-        (2, lambda px, w, h: clear_patch(px, w, h, cells[2])),
+        (2, lambda px, w, h: clear_full(px, w, h, cells[2], False, flood=False)),
     ]
     for fi, run in plans:
         im = Image.open(io.BytesIO(base64.b64decode(uris[fi]))).convert("RGBA")
