@@ -43,8 +43,14 @@ body{display:flex;flex-direction:column;align-items:center;height:100dvh;overflo
    압축돼 칸끼리 겹친다. align-content 는 두 번 선언: safe center 미지원 브라우저는
    앞의 start 를 쓰고, 지원 브라우저는 사진이 화면보다 길 때 start 로 되돌아가
    위쪽이 잘리지 않는다 */
+.grid-wrap{position:relative;width:100%;flex:1;min-height:0;display:flex}
 .shots-grid{display:grid;grid-template-columns:1fr 1fr;grid-auto-rows:max-content;gap:9px;width:100%;flex:1;min-height:0;padding:2px;align-content:start;align-content:safe center;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch}
 .shots-grid::-webkit-scrollbar{display:none}
+/* 화면 밖에 사진이 더 있을 때만 뜨는 안내. 사진 탭을 막지 않도록 pointer-events 없음 */
+.more-cue{position:absolute;left:0;right:0;bottom:0;height:62px;pointer-events:none;display:flex;align-items:flex-end;justify-content:center;padding-bottom:4px;opacity:1;transition:opacity .25s;background:linear-gradient(to top,rgba(17,17,17,.96) 25%,rgba(17,17,17,0))}
+.more-cue.off{opacity:0}
+.more-cue span{font-size:11.5px;font-weight:700;color:#fff;background:rgba(255,255,255,.16);border:1px solid rgba(255,255,255,.18);border-radius:13px;padding:5px 13px;animation:bob 1.5s ease-in-out infinite}
+@keyframes bob{0%,100%{transform:translateY(0)}50%{transform:translateY(4px)}}
 /* 칸 비율 = 촬영된 원본 비율(--shot-ar). contain 과 짝지어 원본을 잘라내지 않는다 */
 .shot{position:relative;width:100%;aspect-ratio:var(--shot-ar,4/3);border-radius:10px;overflow:hidden;cursor:pointer;background:#000;border:2px solid rgba(255,255,255,.12);transition:border-color .18s,box-shadow .18s,opacity .18s,transform .12s}
 .shot img{width:100%;height:100%;object-fit:contain;display:block}
@@ -94,7 +100,10 @@ body{display:flex;flex-direction:column;align-items:center;height:100dvh;overflo
     <span class="hint" id="hint">0 / 4 선택됨</span>
     <button class="btn-clear" id="clear-btn" onclick="clearSel()" hidden>전체 해제</button>
   </div>
-  <div class="shots-grid" id="grid"></div>
+  <div class="grid-wrap">
+    <div class="shots-grid" id="grid"></div>
+    <div class="more-cue off" id="more-cue"><span>↓ 아래로 더 있어요</span></div>
+  </div>
   <button class="btn-p" id="make-btn" onclick="makeResult()" disabled>✨ 완성본 만들기</button>
   <button class="btn-s" onclick="goFrame()">↩ 다시 찍기</button>
 </div>
@@ -245,6 +254,18 @@ function showSelect(){
     g.appendChild(cell);
   });
   selShots=[];renderSel();
+  // rAF 는 탭이 백그라운드면 안 돌아 안내가 안 뜬다 → 동기 호출 + 정착용 재확인
+  updateMoreCue();setTimeout(updateMoreCue,80);
+}
+// 아래쪽이 잘려 다 안 보이는 사진 수를 세어 안내한다. 반쯤 걸친 줄도 세어야
+// 하므로 '완전히 아래' 가 아니라 '아래 끝이 화면 밖' 을 기준으로 한다
+function updateMoreCue(){
+  const g=document.getElementById('grid'),cue=document.getElementById('more-cue');
+  const gb=g.getBoundingClientRect();
+  const n=[...g.querySelectorAll('.shot')]
+    .filter(c=>c.getBoundingClientRect().bottom>gb.bottom+4).length;
+  cue.querySelector('span').textContent=`↓ 아래로 ${n}장 더`;
+  cue.classList.toggle('off',n===0);
 }
 function toggle(i){
   const p=selShots.indexOf(i);
@@ -337,6 +358,8 @@ function cancelShoot(){stopStream();goFrame();}
 function goFrame(){show('s-frame');}
 function restart(){show('s-frame');}
 function wait(ms){return new Promise(r=>setTimeout(r,ms));}
+document.getElementById('grid').addEventListener('scroll',updateMoreCue,{passive:true});
+window.addEventListener('resize',updateMoreCue);
 </script>
 </body>
 </html>
