@@ -53,7 +53,8 @@ def load_cells(html):
     m = re.search(r"const\s+CELLS\s*=\s*(\[.*?\]);", html, re.S)
     if not m:
         sys.exit("CELLS array not found in index.html")
-    literal = re.sub(r",(\s*[\]\}])", r"\1", m.group(1))  # 후행 쉼표 제거 → JSON 호환
+    literal = re.sub(r"//[^\n]*", "", m.group(1))         # 줄 주석 제거
+    literal = re.sub(r",(\s*[\]\}])", r"\1", literal)     # 후행 쉼표 제거 → JSON 호환
     return json.loads(literal)
 
 
