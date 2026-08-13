@@ -7,17 +7,17 @@
 PNG 를 그 위에 덮으므로(drawImage(frameImg, ...)), 프레임의 사진 영역이
 불투명하면 그대로 사진을 가린다.
 
-프레임마다 남은 형태가 달라 규칙을 나눈다:
+남은 형태는 프레임마다 다르다:
 
-  - 크림 도트(0): 사진 영역 안(흰 불투명+투명 교대) + 테두리 안쪽 띠
-    (흰+회색 모두 불투명). 영역 안은 '밝은 무채색 불투명' 전부 제거,
-    띠는 영역 경계에서 flood-fill 로 제거(검은 테두리·크림 배경에서 정지).
-  - Worship Again(1): 사진 영역 안 전체가 체크무늬(종이 위 흰+투명 교대).
-    영역 안 '밝은 무채색/미색 불투명' 전부 제거. 성경구절 텍스트(어두움)와
-    별 낙서(유채색)는 조건에 안 걸려 보존.
-  - 꿈청 낙서(2): 사진 영역에 알파 50 안팎의 흰 막이 깔리고 그 위에 격자선이
-    얹혀 있어(합성 시 사진이 뿌옇게 뜨고 격자가 비친다) 0·1 과 같은 규칙으로
-    전부 제거. 분홍 낙서(유채색)와 검은 테두리(어두움)는 보존된다.
+  - 크림 도트(0): 흰 불투명+투명 교대. 사진 영역 밖 테두리 안쪽 띠까지
+    번져 있어 flood-fill 로 함께 제거(검은 테두리·크림 배경에서 정지).
+  - Worship Again(1): 종이 위 흰+투명 교대가 사진 영역 전체에.
+  - 꿈청 낙서(2): 알파 50 안팎의 흰 막 + 그 위의 격자선. 합성하면 사진이
+    뿌옇게 뜨고 격자가 비친다. 격자가 순수 회색이 아니라 연분홍 색조
+    (예: 218,190,200)를 띠어서, 무채색만 지우는 규칙으로는 살아남았다.
+
+판정은 is_wash() 한 곳 — '밝고 채도가 낮으면' 지운다. 낙서·글씨·테두리는
+어둡거나 채도가 높아(0.3~0.7) 조건에 안 걸려 보존된다.
 
 보라 글로우(3)는 정상이라 건드리지 않는다.
 
@@ -37,8 +37,11 @@ from PIL import Image
 
 HTML_PATH = Path(__file__).resolve().parent / "index.html"
 
-LIGHT_MIN = 150      # '밝은' 판정: 모든 채널이 이 이상
-NEUTRAL_MAX = 12     # '무채색' 판정: 채널 간 편차가 이 이하
+# 지울 것(체크무늬·흰 막·격자)은 '밝고 채도가 낮다'. 남길 것(낙서·글씨·테두리)은
+# '어둡거나 채도가 높다'. 순수 무채색만 지우면 연분홍 색조(예: 218,190,200)를 띤
+# 격자가 살아남으므로 채도로 판정한다.
+LIGHT_MIN_LUM = 150  # '밝은' 판정: 평균 밝기가 이 이상
+SAT_MAX = 0.25       # '색이 옅은' 판정: 채도가 이 이하 (낙서는 0.3~0.7)
 ALPHA_KEEP = 10      # 이 이하 알파는 질감으로 보고 보존
 FLOOD_MARGIN = 48    # flood-fill 이 셀 밖으로 나갈 수 있는 최대 거리
 
@@ -54,19 +57,19 @@ def load_cells(html):
     return json.loads(literal)
 
 
-def neutral(p, wide_tint=False):
-    r, g, b = p[:3]
-    if min(r, g, b) < LIGHT_MIN:
+def is_wash(p):
+    """체크무늬·흰 막·격자면 True. 낙서/글씨/테두리면 False."""
+    r, g, b, a = p
+    if a <= ALPHA_KEEP:
         return False
-    spread = max(r, g, b) - min(r, g, b)
-    if spread <= NEUTRAL_MAX:
-        return True
-    # Worship Again 종이의 미색(살짝 따뜻한 흰색)까지 허용
-    return wide_tint and min(r, g, b) >= 230 and spread <= 20
+    if (r + g + b) / 3 < LIGHT_MIN_LUM:
+        return False
+    mx = max(r, g, b)          # 밝기 조건을 통과했으므로 mx > 0
+    return (mx - min(r, g, b)) / mx <= SAT_MAX
 
 
-def clear_full(px, w, h, cells, wide_tint, flood):
-    """사진 영역 안의 밝은 무채색 불투명 픽셀 전부 제거 (+ 선택적 띠 flood)."""
+def clear_full(px, w, h, cells, flood):
+    """사진 영역 안의 흰 막/체크무늬 전부 제거 (+ 선택적 띠 flood)."""
     cleared = 0
     for cx, cy, cw, ch in cells:
         x0, y0 = max(int(cx), 0), max(int(cy), 0)
@@ -74,12 +77,12 @@ def clear_full(px, w, h, cells, wide_tint, flood):
         for y in range(y0, y1):
             for x in range(x0, x1):
                 p = px[x, y]
-                if p[3] > ALPHA_KEEP and neutral(p, wide_tint):
+                if is_wash(p):
                     px[x, y] = (p[0], p[1], p[2], 0)
                     cleared += 1
         if not flood:
             continue
-        # 띠: 셀 경계에서 바깥으로 전파. 체크무늬(밝은 무채색)와 투명 픽셀로만
+        # 띠: 셀 경계에서 바깥으로 전파. 체크무늬와 투명 픽셀로만
         # 나아가고, 검은 테두리·크림 배경(유채색)에서 멈춘다.
         bx0, by0 = max(x0 - FLOOD_MARGIN, 0), max(y0 - FLOOD_MARGIN, 0)
         bx1, by1 = min(x1 + FLOOD_MARGIN, w), min(y1 + FLOOD_MARGIN, h)
@@ -95,7 +98,7 @@ def clear_full(px, w, h, cells, wide_tint, flood):
                 continue
             seen.add((x, y))
             p = px[x, y]
-            if p[3] > ALPHA_KEEP and neutral(p, wide_tint):
+            if is_wash(p):
                 px[x, y] = (p[0], p[1], p[2], 0)
                 cleared += 1
             elif p[3] > ALPHA_KEEP:
@@ -111,14 +114,12 @@ def main():
     if len(uris) != 4 or len(cells) != 4:
         sys.exit(f"expected 4 frames, found {len(uris)} images / {len(cells)} cell sets")
 
-    plans = [
-        (0, lambda px, w, h: clear_full(px, w, h, cells[0], False, flood=True)),
-        (1, lambda px, w, h: clear_full(px, w, h, cells[1], True, flood=False)),
-        (2, lambda px, w, h: clear_full(px, w, h, cells[2], False, flood=False)),
-    ]
-    for fi, run in plans:
+    # 0 번만 테두리 안쪽 띠까지 번져 있어 flood 가 필요하다
+    plans = [(0, True), (1, False), (2, False)]
+    for fi, flood in plans:
         im = Image.open(io.BytesIO(base64.b64decode(uris[fi]))).convert("RGBA")
-        cleared = run(im.load(), *im.size)
+        w, h = im.size
+        cleared = clear_full(im.load(), w, h, cells[fi], flood)
         buf = io.BytesIO()
         im.save(buf, format="PNG", optimize=True)
         new_b64 = base64.b64encode(buf.getvalue()).decode("ascii")
