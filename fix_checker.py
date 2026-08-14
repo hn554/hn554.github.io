@@ -45,14 +45,19 @@ SAT_MAX = 0.25       # '색이 옅은' 판정: 채도가 이 이하 (낙서는 0
 ALPHA_KEEP = 10      # 이 이하 알파는 질감으로 보고 보존
 FLOOD_MARGIN = 48    # flood-fill 이 셀 밖으로 나갈 수 있는 최대 거리
 
+# Worship Again(1) 아래쪽 별 뭉치 재배치
+STAR_BOX = (281, 431, 382, 541)   # 원래 자리 (사진 위에 얹혀 있음)
+STAR_SCALE = 0.70
+STAR_AT = (311, 295)              # 옮길 자리 — 왼쪽 말씀 구절과 같은 줄
+
 B64_RE = r'"data:image/png;base64,([A-Za-z0-9+/=]+)"'
 
 
-def load_cells(html):
-    """사진 영역 좌표를 index.html 의 CELLS 에서 직접 읽는다(좌표 이중 관리 방지)."""
-    m = re.search(r"const\s+CELLS\s*=\s*(\[.*?\]);", html, re.S)
+def load_rects(html, name):
+    """좌표를 index.html 에서 직접 읽는다(좌표 이중 관리 방지)."""
+    m = re.search(r"const\s+" + name + r"\s*=\s*(\[.*?\]);", html, re.S)
     if not m:
-        sys.exit("CELLS array not found in index.html")
+        sys.exit(f"{name} array not found in index.html")
     literal = re.sub(r"//[^\n]*", "", m.group(1))         # 줄 주석 제거
     literal = re.sub(r",(\s*[\]\}])", r"\1", literal)     # 후행 쉼표 제거 → JSON 호환
     return json.loads(literal)
@@ -108,19 +113,40 @@ def clear_full(px, w, h, cells, flood):
     return cleared
 
 
+def move_star(im):
+    """Worship Again(1): 아래쪽 별 뭉치가 사진 위에 얹혀 인물을 가린다.
+    왼쪽 말씀 구절과 같은 줄(사진 영역 위)로 축소 이동해 좌우 균형을 맞춘다.
+    STAR_BOX 안에는 별 픽셀만 있고 옮길 자리는 비어 있음을 확인했다."""
+    sprite = im.crop(STAR_BOX)
+    px = im.load()
+    x0, y0, x1, y1 = STAR_BOX
+    for y in range(y0, y1):
+        for x in range(x0, x1):
+            r, g, b, a = px[x, y]
+            if a:
+                px[x, y] = (r, g, b, 0)
+    w, h = sprite.size
+    sprite = sprite.resize((round(w * STAR_SCALE), round(h * STAR_SCALE)), Image.LANCZOS)
+    im.alpha_composite(sprite, STAR_AT)
+    return sprite.size
+
+
 def main():
     html = HTML_PATH.read_text(encoding="utf-8")
-    cells = load_cells(html)
+    # 지우는 범위는 구멍 전체(OPENINGS). 사진을 그리는 CELLS 보다 넓을 수 있다
+    openings = load_rects(html, "OPENINGS")
     uris = re.findall(B64_RE, html)
-    if len(uris) != 4 or len(cells) != 4:
-        sys.exit(f"expected 4 frames, found {len(uris)} images / {len(cells)} cell sets")
+    if len(uris) != 4 or len(openings) != 4:
+        sys.exit(f"expected 4 frames, found {len(uris)} images / {len(openings)} openings")
 
     # 0 번만 테두리 안쪽 띠까지 번져 있어 flood 가 필요하다
     plans = [(0, True), (1, False), (2, False)]
     for fi, flood in plans:
         im = Image.open(io.BytesIO(base64.b64decode(uris[fi]))).convert("RGBA")
         w, h = im.size
-        cleared = clear_full(im.load(), w, h, cells[fi], flood)
+        cleared = clear_full(im.load(), w, h, openings[fi], flood)
+        if fi == 1:
+            print(f"frame1: 별 이동/축소 → {move_star(im)}")
         buf = io.BytesIO()
         im.save(buf, format="PNG", optimize=True)
         new_b64 = base64.b64encode(buf.getvalue()).decode("ascii")
