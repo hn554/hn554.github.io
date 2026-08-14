@@ -74,12 +74,14 @@ def is_wash(p):
     return (mx - min(r, g, b)) / mx <= SAT_MAX
 
 
-def clear_full(px, w, h, cells, flood):
-    """사진 영역 안의 흰 막/체크무늬 전부 제거 (+ 선택적 띠 flood)."""
+def clear_full(px, w, h, cells, flood, inset=0):
+    """사진 영역 안의 흰 막/체크무늬 전부 제거 (+ 선택적 띠 flood).
+    inset 을 주면 구멍 가장자리를 그만큼 남긴다 — 테두리가 부드럽게
+    번지는 프레임(보라 글로우)에서 경계가 거칠어지지 않도록."""
     cleared = 0
     for cx, cy, cw, ch in cells:
-        x0, y0 = max(int(cx), 0), max(int(cy), 0)
-        x1, y1 = min(int(cx + cw + 1), w), min(int(cy + ch + 1), h)
+        x0, y0 = max(int(cx + inset), 0), max(int(cy + inset), 0)
+        x1, y1 = min(int(cx + cw + 1 - inset), w), min(int(cy + ch + 1 - inset), h)
         for y in range(y0, y1):
             for x in range(x0, x1):
                 p = px[x, y]
@@ -139,12 +141,15 @@ def main():
     if len(uris) != 4 or len(openings) != 4:
         sys.exit(f"expected 4 frames, found {len(uris)} images / {len(openings)} openings")
 
-    # 0 번만 테두리 안쪽 띠까지 번져 있어 flood 가 필요하다
-    plans = [(0, True), (1, False), (2, False)]
-    for fi, flood in plans:
+    # (프레임, flood, inset)
+    # 0: 테두리 안쪽 띠까지 번져 있어 flood 필요
+    # 3: 사진 위에 흰 반점이 흩뿌려져 있다. 구멍 경계는 파란 배경(채도 높음)이
+    #    받쳐주므로 가장자리까지 지워도 테두리가 무너지지 않는다
+    plans = [(0, True, 0), (1, False, 0), (2, False, 0), (3, False, 0)]
+    for fi, flood, inset in plans:
         im = Image.open(io.BytesIO(base64.b64decode(uris[fi]))).convert("RGBA")
         w, h = im.size
-        cleared = clear_full(im.load(), w, h, openings[fi], flood)
+        cleared = clear_full(im.load(), w, h, openings[fi], flood, inset)
         if fi == 1:
             print(f"frame1: 별 이동/축소 → {move_star(im)}")
         buf = io.BytesIO()
